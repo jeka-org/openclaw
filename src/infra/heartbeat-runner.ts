@@ -55,6 +55,7 @@ import {
   resolveHeartbeatSenderContext,
 } from "./outbound/targets.js";
 import { peekSystemEvents } from "./system-events.js";
+import { loadCronStore, resolveCronStorePath } from "../cron/store.js";
 
 type HeartbeatDeps = OutboundSendDeps &
   ChannelHeartbeatDeps & {
@@ -400,6 +401,7 @@ export async function runHeartbeatOnce(opts: {
   agentId?: string;
   heartbeat?: HeartbeatConfig;
   reason?: string;
+  cronRelay?: boolean;
   deps?: HeartbeatDeps;
 }): Promise<HeartbeatRunResult> {
   const cfg = opts.cfg ?? loadConfig();
@@ -490,9 +492,37 @@ export async function runHeartbeatOnce(opts: {
   const pendingEvents = isExecEvent || isCronEvent ? peekSystemEvents(sessionKey) : [];
   const hasExecCompletion = pendingEvents.some((evt) => evt.includes("Exec finished"));
   const hasCronEvents = isCronEvent && pendingEvents.length > 0;
+  
+  // For cron events, check if the relay flag is set to false.
+  // If relay is explicitly disabled in the job config, use standard heartbeat prompt
+  // instead of CRON_EVENT_PROMPT. This allows background tasks to run without the
+  // "relay reminder" prompt being prepended.
+  let shouldRelayCron = true; // Default to true for backwards compat
+  if (isCronEvent && hasCronEvents) {
+    // Check opts first (passed directly from runHeartbeatOnce call)
+    if (typeof opts.cronRelay === "boolean") {
+      shouldRelayCron = opts.cronRelay;
+    } else {
+      // Extract job ID from reason (format: "cron:${jobId}")
+      const jobIdMatch = opts.reason?.match(/^cron:([^:]+)$/);
+      if (jobIdMatch) {
+        try {
+          const storePath = resolveCronStorePath(cfg.cron?.store);
+          const cronStore = await loadCronStore(storePath);
+          const job = cronStore.jobs.find((j) => j.id === jobIdMatch[1]);
+          if (job && job.relay === false) {
+            shouldRelayCron = false;
+          }
+        } catch {
+          // If we can't load cron store, default to relaying
+        }
+      }
+    }
+  }
+  
   const prompt = hasExecCompletion
     ? EXEC_EVENT_PROMPT
-    : hasCronEvents
+    : hasCronEvents && shouldRelayCron
       ? CRON_EVENT_PROMPT
       : resolveHeartbeatPrompt(cfg, heartbeat);
   const ctx = {

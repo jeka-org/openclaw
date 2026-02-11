@@ -77,6 +77,8 @@ export type CronJob = {
   wakeMode: CronWakeMode;
   payload: CronPayload;
   delivery?: CronDelivery;
+  /** If true (default), prepend "relay reminder" prompt for cron events. Set false for background tasks. */
+  relay?: boolean;
   state: CronJobState;
 };
 
@@ -92,5 +94,6 @@ export type CronJobCreate = Omit<CronJob, "id" | "createdAtMs" | "updatedAtMs" |
 export type CronJobPatch = Partial<Omit<CronJob, "id" | "createdAtMs" | "state" | "payload">> & {
   payload?: CronPayloadPatch;
   delivery?: CronDeliveryPatch;
+  relay?: boolean;
   state?: Partial<CronJobState>;
 };
